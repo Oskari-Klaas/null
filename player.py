@@ -1,38 +1,32 @@
 import pygame
 
 class Player:
-    # 1. The Hardware Setup (Runs once when the player spawns)
     def __init__(self, start_x, start_y):
-        self.color = (147, 112, 219)
+        self.color = (147, 112, 219) # Purple
         self.speed = 5
-        # This creates the physical hitbox exactly like you did before
         self.rect = pygame.Rect(start_x, start_y, 50, 50)
+        self.alive = True 
 
-    # 2. check for W A S D input
     def move(self, keys):
-        if keys[pygame.K_a]:
-            self.rect.x -= self.speed
-        if keys[pygame.K_d]:
-            self.rect.x += self.speed
-        if keys[pygame.K_w]:
-            self.rect.y -= self.speed
-        if keys[pygame.K_s]:
-            self.rect.y += self.speed
+        # If the player is dead, they can't move
+        if not self.alive: 
+            return 
 
-        #checking for walls
+        if keys[pygame.K_a]: self.rect.x -= self.speed
+        if keys[pygame.K_d]: self.rect.x += self.speed
+        if keys[pygame.K_w]: self.rect.y -= self.speed
+        if keys[pygame.K_s]: self.rect.y += self.speed
 
-        if self.rect.x < 0:
-            self.rect.x = 0
+        # Wall collisions
+        if self.rect.x < 0: self.rect.x = 0
+        if self.rect.x > 750: self.rect.x = 750
+        if self.rect.y < 0: self.rect.y = 0
+        if self.rect.y > 550: self.rect.y = 550
 
-        if self.rect.x > 750:
-            self.rect.x = 750
+    def die(self):
+        self.alive = False
+        self.color = (50, 50, 50) # Turns gray when dead
+        print("GAME OVER!")
 
-        if self.rect.y < 0:
-            self.rect.y = 0
-
-        if self.rect.y > 550:
-            self.rect.y = 550
-    
-    # 3. The Render Command
     def draw(self, screen):
         pygame.draw.rect(screen, self.color, self.rect)
