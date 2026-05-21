@@ -1,3 +1,4 @@
+import time
 import pygame
 import sys
 import enemy
@@ -22,6 +23,7 @@ player_box = player.Player(400, 300)
 
 #creates enemy
 enemy_box = enemy.Enemy(100, 100)
+
 
 #main application loop
 running = True
