@@ -44,12 +44,22 @@ class Enemy:
         # 2. SENTINEL
         elif self.name == "Sentinel":
             self.state = "active"; self.speed = 3.0
+            self.state = "active"
+            self.speed = 1.0
+            dx = player_rect.centerx - self.rect.centerx
+            dy = player_rect.centery - self.rect.centery
+            dist = math.hypot(dx, dy)
             if dist != 0: self.dir_x, self.dir_y = dx/dist, dy/dist
 
         # 3. GHOST
         elif self.name == "Ghost":
             self.state = "active"
             self.speed = 4.5 if dist > 150 else 1.5
+            dx = player_rect.centerx - self.rect.centerx
+            dy = player_rect.centery - self.rect.centery
+            dist = math.hypot(dx, dy)
+            # Gets faster the closer it is, but caps at speed 6
+            self.speed = max(1.5, 3 - (dist / 100)) 
             if dist != 0: self.dir_x, self.dir_y = dx/dist, dy/dist
 
         # 4. PULSE
