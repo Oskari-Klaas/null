@@ -2,7 +2,6 @@ import pygame
 import math
 
 class Enemy:
-
     def __init__(self, start_x, start_y):
         self.color = (255, 0, 0)
         self.speed = 0
@@ -46,6 +45,21 @@ class Enemy:
 
         elif self.state == "dashing":
             self.speed = 6
+            if self.timer > 120: 
+                self.state = "dashing"
+                self.timer = 0
+                
+                # Aim at player position
+                if player_rect.x > self.rect.x: self.dash_dir_x = 1
+                elif player_rect.x < self.rect.x: self.dash_dir_x = -1
+                else: self.dash_dir_x = 0
+
+                if player_rect.y > self.rect.y: self.dash_dir_y = 1
+                elif player_rect.y < self.rect.y: self.dash_dir_y = -1
+                else: self.dash_dir_y = 0
+
+        if self.state == "dashing":
+            self.speed = 8
             self.timer += 1
             if self.timer > 30:
                 self.state = "idle"
@@ -58,6 +72,9 @@ class Enemy:
         self.rect.x = int(self.exact_x)
         self.rect.y = int(self.exact_y)
         
+                
+        self.rect.x += self.dash_dir_x * self.speed
+        self.rect.y += self.dash_dir_y * self.speed
 
     def draw(self, screen):
         pygame.draw.rect(screen, self.color, self.rect)
