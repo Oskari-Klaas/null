@@ -8,7 +8,6 @@ class Player:
         self.alive = True 
 
     def move(self, keys):
-        # If the player is dead, they can't move
         if not self.alive: 
             return 
 
@@ -17,7 +16,7 @@ class Player:
         if keys[pygame.K_w]: self.rect.y -= self.speed
         if keys[pygame.K_s]: self.rect.y += self.speed
 
-        # Wall collisions
+        # Screen boundaries
         if self.rect.x < 0: self.rect.x = 0
         if self.rect.x > 750: self.rect.x = 750
         if self.rect.y < 0: self.rect.y = 0
@@ -25,7 +24,7 @@ class Player:
 
     def die(self):
         self.alive = False
-        self.color = (50, 50, 50) # Turns gray when dead
+        self.color = (50, 50, 50) # Gray
         print("GAME OVER!")
 
     def draw(self, screen):
