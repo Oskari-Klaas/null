@@ -1,5 +1,9 @@
 import pygame
 import sys
+import enemy
+import player
+
+#somthing
 
 pygame.init()
 #box dimensions
@@ -13,8 +17,11 @@ screen = pygame.display.set_mode((screen_width, screen_height))
 pygame.display.set_caption("Null")
 clock = pygame.time.Clock()
 
-#dimensions and position
-player = pygame.Rect(400, 300, 50, 50)
+#creates da player
+player_box = player.Player(400, 300)
+
+#creates enemy
+enemy_box = enemy.Enemy(100, 100)
 
 #main application loop
 running = True
@@ -23,9 +30,17 @@ while running:
         if event.type == pygame.QUIT:
             running = False
 
+    keys = pygame.key.get_pressed()
+
+    player_box.move(keys)
+
+    enemy_box.update(player_box.rect)
+
     screen.fill(background_color)
 
-    pygame.draw.rect(screen, box_color, player)
+    player_box.draw(screen)
+
+    enemy_box.draw(screen)
 
     pygame.display.flip()
 
