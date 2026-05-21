@@ -8,8 +8,7 @@ class Player:
         self.alive = True 
 
     def move(self, keys):
-        if not self.alive: 
-            return 
+        if not self.alive: return 
 
         if keys[pygame.K_a]: self.rect.x -= self.speed
         if keys[pygame.K_d]: self.rect.x += self.speed
@@ -17,15 +16,14 @@ class Player:
         if keys[pygame.K_s]: self.rect.y += self.speed
 
         # Screen boundaries
-        if self.rect.x < 0: self.rect.x = 0
-        if self.rect.x > 750: self.rect.x = 750
-        if self.rect.y < 0: self.rect.y = 0
-        if self.rect.y > 550: self.rect.y = 550
+        if self.rect.left < 0: self.rect.left = 0
+        if self.rect.right > 800: self.rect.right = 800
+        if self.rect.top < 0: self.rect.top = 0
+        if self.rect.bottom > 600: self.rect.bottom = 600
 
     def die(self):
         self.alive = False
-        self.color = (50, 50, 50) # Gray
-        print("GAME OVER!")
+        self.color = (50, 50, 50)
 
     def draw(self, screen):
         pygame.draw.rect(screen, self.color, self.rect)
