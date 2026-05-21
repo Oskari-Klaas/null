@@ -42,7 +42,7 @@ class Enemy:
         # SENTINEL: Constant Pressure Logic
         elif self.name == "Sentinel":
             self.state = "active"
-            self.speed = 3.0
+            self.speed = 1.0
             dx = player_rect.centerx - self.rect.centerx
             dy = player_rect.centery - self.rect.centery
             dist = math.hypot(dx, dy)
@@ -55,7 +55,7 @@ class Enemy:
             dy = player_rect.centery - self.rect.centery
             dist = math.hypot(dx, dy)
             # Gets faster the closer it is, but caps at speed 6
-            self.speed = max(1.5, 7 - (dist / 100)) 
+            self.speed = max(1.5, 3 - (dist / 100)) 
             if dist != 0: self.dir_x, self.dir_y = dx/dist, dy/dist
 
         self.exact_x += self.dir_x * self.speed
