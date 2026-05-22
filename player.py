@@ -1,29 +1,20 @@
 import pygame
 
 class Player:
-    def __init__(self, start_x, start_y):
-        self.color = (147, 112, 219) # Purple
-        self.speed = 5
-        self.rect = pygame.Rect(start_x, start_y, 50, 50)
-        self.alive = True 
+    def __init__(self, x, y):
+        self.rect = pygame.Rect(x, y, 40, 40)
+        self.pos_x, self.pos_y = float(x), float(y)
+        self.speed, self.alive, self.moving = 4.5, True, False
 
-    def move(self, keys):
-        if not self.alive: return 
+    def move(self, keys, px=0, py=0):
+        if not self.alive: return
+        dx = (keys[pygame.K_d] - keys[pygame.K_a]) * self.speed
+        dy = (keys[pygame.K_s] - keys[pygame.K_w]) * self.speed
+        self.moving = (dx != 0 or dy != 0)
+        self.pos_x += dx + px; self.pos_y += dy + py
+        self.pos_x = max(0, min(self.pos_x, 760))
+        self.pos_y = max(0, min(self.pos_y, 560))
+        self.rect.topleft = (int(self.pos_x), int(self.pos_y))
 
-        if keys[pygame.K_a]: self.rect.x -= self.speed
-        if keys[pygame.K_d]: self.rect.x += self.speed
-        if keys[pygame.K_w]: self.rect.y -= self.speed
-        if keys[pygame.K_s]: self.rect.y += self.speed
-
-        # Screen boundaries
-        if self.rect.left < 0: self.rect.left = 0
-        if self.rect.right > 800: self.rect.right = 800
-        if self.rect.top < 0: self.rect.top = 0
-        if self.rect.bottom > 600: self.rect.bottom = 600
-
-    def die(self):
-        self.alive = False
-        self.color = (50, 50, 50)
-
-    def draw(self, screen):
-        pygame.draw.rect(screen, self.color, self.rect)
+    def die(self): self.alive = False
+    def draw(self, screen): pygame.draw.rect(screen, (0,255,0) if self.alive else (100,100,100), self.rect)
