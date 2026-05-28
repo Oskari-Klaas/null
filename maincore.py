@@ -1,4 +1,11 @@
+"""Main game module for the Null game.
+
+This file initializes the game loop, audio, visuals, enemy spawning,
+player input, and game state transitions.
+"""
+
 import math
+import os
 import random
 import sys
 
@@ -7,8 +14,23 @@ import damage
 import enemy
 import player
 
+from audio_manager import AudioManager
+from fade_transition import FadeTransition
+from particles import ParticleSystem
+from ui import draw_centered_text, draw_wrapped_text, draw_arena_background
+from utils import (
+    brighten,
+    clamp,
+    scaled_rect,
+    text_color_for,
+    tier_color_for,
+    tier_for,
+)
 
+
+pygame.mixer.pre_init(22050, -16, 1, 512)
 pygame.init()
+pygame.mixer.init()
 
 screen_width = 800
 screen_height = 600
@@ -26,6 +48,25 @@ small_font = pygame.font.SysFont("Arial", 16, bold=True)
 menu_font = pygame.font.SysFont(None, 48)
 big_font = pygame.font.SysFont(None, 100, bold=True)
 
+base_dir = os.path.dirname(os.path.abspath(__file__))
+audio_dir = os.path.join(base_dir, "assets", "audio")
+music_files = {
+    "menu": os.path.join(audio_dir, "menu_loop.wav"),
+    "game": os.path.join(audio_dir, "game_loop.wav"),
+    "hard": os.path.join(audio_dir, "hard_loop.wav"),
+    "death": os.path.join(audio_dir, "death_muffled_loop.wav"),
+}
+music_volumes = {
+    "menu": 0.52,
+    "game": 0.58,
+    "hard": 0.64,
+    "death": 0.42,
+}
+
+audio_manager = AudioManager(audio_dir, music_files, music_volumes)
+fade_transition_duration = 24
+fade_transition = FadeTransition(fade_transition_duration)
+
 player_box = player.Player(400, 500)
 enemies = []
 collectibles = []
@@ -42,8 +83,6 @@ menu_click_timer = 0
 menu_pop_timer = 0
 menu_pop_duration = 26
 info_click_timer = 0
-loading_timer = 0
-loading_duration = 95
 death_shake_timer = 0
 death_flash_timer = 0
 panic_shake_timer = 0
@@ -52,8 +91,6 @@ selected_choice_index = None
 selected_choice_name = None
 choice_pop_timer = 0
 choice_pop_duration = 28
-choice_fade_timer = 0
-choice_fade_duration = 30
 round_intro_timer = 0
 round_intro_duration = 92
 round_intro_fade_duration = 48
@@ -89,10 +126,11 @@ curse_unlock_round = 7
 curse_interval = 3
 buff_anchor_round = 5
 buff_round_interval = 5
+weaver_pressure_level = 0
 
 current_choices = []
 inspected_choice_index = None
-particles = []
+particle_system = ParticleSystem()
 choices_rects = [
     pygame.Rect(90, 240, 160, 130),
     pygame.Rect(320, 240, 160, 130),
@@ -101,8 +139,8 @@ choices_rects = [
 
 choice_descriptions = {
     "Sentinel": "Chases the player directly. Slow at first, faster after buffs.",
-    "Drifter": "Moves straight up, down, left, or right. Its lane pushes you if you stand on that line. Touching Drifter kills you.",
-    "The Weaver": "Touching it kills you. Its thread can be cut through coins or enemies.",
+    "Drifter": "Moves straight up, down, left, or right. Its lane pulls you toward it if you stand on that line. Touching Drifter kills you.",
+    "The Weaver": "Touching it kills you. Each Weaver pick tightens the web. Its thread can be cut through coins or enemies.",
     "Stalker": "Locks onto a direction, winds up, then dashes very fast.",
     "Pulse": "Chases the player while its body grows and shrinks.",
     "Reaper": "Marks a red zone, then teleports there after a short delay.",
@@ -138,10 +176,12 @@ def tier_color_for(name):
 
 
 def has_regular_enemy():
+    """Check if any non-curse enemies are present in the current enemy list."""
     return any(e.name not in curse_names for e in enemies)
 
 
 def hard_spawn_chance():
+    """Return the current probability of selecting a hard enemy."""
     if round_number < 3:
         base_chance = 0.05
     else:
@@ -210,6 +250,7 @@ def should_offer_curse_selection():
 
 
 def refresh_enemy_choices():
+    """Pick the next set of enemy choices for the player selection screen."""
     global current_choices, current_selection, force_hard_selection, pressure_round_active
     global inspected_choice_index
 
@@ -268,7 +309,43 @@ def refresh_curse_choices(reset_empty=False):
         current_choices.append(None)
 
 
+def init_audio():
+    """Initialize audio resources and sound effects."""
+    audio_manager.init()
+
+
+def play_sound(name):
+    """Play a sound effect by name."""
+    audio_manager.play(name)
+
+
+def update_movement_sound():
+    """Update player movement sound playback based on movement state."""
+    audio_manager.update_movement(player_box)
+
+
+def music_track_for_state():
+    """Choose the current music track based on the game state."""
+    if game_state == "playing":
+        if not player_box.alive:
+            return "death"
+        if any(e.name in hard_enemies for e in enemies):
+            return "hard"
+        return "game"
+    return "menu"
+
+
+def switch_music(track):
+    audio_manager.switch_music(track)
+
+
+def update_audio():
+    """Ensure current music matches the active game state."""
+    switch_music(music_track_for_state())
+
+
 def prepare_next_selection():
+    """Advance the game to a new enemy/curse selection screen."""
     global game_state
 
     if force_hard_selection:
@@ -282,17 +359,18 @@ def prepare_next_selection():
     game_state = "choosing"
 
 
-def begin_menu_start_transition():
-    global game_state, menu_pop_timer
+def begin_fade_transition(state, target_state):
+    global game_state, loading_timer, loading_duration, transition_switched, transition_target_state
 
-    menu_pop_timer = menu_pop_duration
-    game_state = "menu_confirm"
-    spawn_particles(play_button.centerx, play_button.centery, (100, 255, 170), amount=34, speed=5.0, style="spark")
-    spawn_panic_ripples(play_button.centerx, play_button.centery, (100, 255, 170))
+    loading_duration = fade_transition_duration
+    loading_timer = loading_duration
+    transition_switched = False
+    transition_target_state = target_state
+    game_state = state
 
 
-def finish_menu_start_transition():
-    global game_state, loading_timer, loading_duration, menu_player_enabled
+def complete_menu_start_transition():
+    global menu_player_enabled
 
     reset_game_data()
     refresh_enemy_choices()
@@ -300,17 +378,85 @@ def finish_menu_start_transition():
     player_box.color = (147, 112, 219)
     player_box.set_position(400, 500, center=True)
     menu_player_enabled = False
-    loading_duration = 95
-    loading_timer = loading_duration
-    game_state = "loading"
+
+
+def complete_menu_return_transition():
+    global menu_intro_timer, menu_player_enabled
+
+    reset_game_data()
+    player_box.alive = True
+    player_box.color = (147, 112, 219)
+    player_box.set_position(400, 500, center=True)
+    menu_player_enabled = False
+    menu_intro_timer = menu_intro_duration
+
+
+def complete_fade_transition_step():
+    global game_state, transition_switched
+
+    state = game_state
+    if state == "loading":
+        complete_menu_start_transition()
+    elif state == "selection_loading":
+        finish_selection_loading()
+    elif state == "menu_loading":
+        complete_menu_return_transition()
+    elif state == "round_loading":
+        finish_round_transition()
+
+    game_state = state
+    transition_switched = True
+
+
+def finish_fade_transition():
+    global game_state, transition_switched, transition_target_state
+
+    game_state = transition_target_state or game_state
+    transition_target_state = None
+    transition_switched = False
+
+
+def fade_transition_alpha():
+    if loading_duration <= 0:
+        return 0
+
+    progress = 1.0 - (loading_timer / loading_duration)
+    progress = max(0.0, min(1.0, progress))
+    if progress < 0.5:
+        fade = progress * 2.0
+    else:
+        fade = (1.0 - progress) * 2.0
+    return int(255 * max(0.0, min(1.0, fade)))
+
+
+def visual_game_state():
+    if game_state == "loading":
+        return "choosing" if transition_switched else "menu"
+    if game_state == "selection_loading":
+        return "choosing" if transition_switched else "playing"
+    if game_state == "menu_loading":
+        return "menu" if transition_switched else "playing"
+    if game_state == "round_loading":
+        return "playing" if transition_switched else "choosing"
+    return game_state
+
+
+def begin_menu_start_transition():
+    global game_state, menu_pop_timer
+
+    play_sound("select")
+    menu_pop_timer = menu_pop_duration
+    game_state = "menu_confirm"
+    particle_system.spawn_particles(play_button.centerx, play_button.centery, (100, 255, 170), amount=34, speed=5.0, style="spark")
+    particle_system.spawn_panic_ripples(play_button.centerx, play_button.centery, (100, 255, 170))
+
+
+def finish_menu_start_transition():
+    begin_fade_transition("loading", "choosing")
 
 
 def begin_selection_loading():
-    global game_state, loading_timer, loading_duration
-
-    loading_duration = 70
-    loading_timer = loading_duration
-    game_state = "selection_loading"
+    begin_fade_transition("selection_loading", "choosing")
 
 
 def finish_selection_loading():
@@ -323,14 +469,7 @@ def finish_selection_loading():
 
 
 def begin_menu_return_loading():
-    global game_state, loading_timer, loading_duration, menu_intro_timer, menu_player_enabled
-
-    reset_game_data()
-    menu_player_enabled = False
-    loading_duration = 70
-    loading_timer = loading_duration
-    menu_intro_timer = menu_intro_duration
-    game_state = "menu_loading"
+    begin_fade_transition("menu_loading", "menu")
 
 
 def begin_survived_transition():
@@ -340,25 +479,26 @@ def begin_survived_transition():
     survived_transition_target = "selection"
     survived_text_timer = survived_text_duration
     survived_fade_timer = 0
-    spawn_particles(player_box.rect.centerx, player_box.rect.centery, (170, 255, 190), amount=44, speed=4.4, life=42, size=5, style="spark")
-    spawn_panic_ripples(player_box.rect.centerx, player_box.rect.centery, (170, 255, 190))
+    particle_system.spawn_particles(player_box.rect.centerx, player_box.rect.centery, (170, 255, 190), amount=44, speed=4.4, life=42, size=5, style="spark")
+    particle_system.spawn_panic_ripples(player_box.rect.centerx, player_box.rect.centery, (170, 255, 190))
 
 
 def begin_selection_menu_return():
     global game_state, survived_transition_target, survived_fade_timer, survived_text_timer
     global main_menu_return_unlocked
 
+    play_sound("back")
     main_menu_return_unlocked = False
     survived_transition_target = "menu"
     survived_text_timer = 0
     survived_fade_timer = survived_fade_duration
     game_state = "selection_menu_fade"
-    spawn_particles(survived_menu_button.centerx, survived_menu_button.centery, (170, 210, 255), amount=24, speed=2.6, life=34, style="dot")
+    particle_system.spawn_particles(survived_menu_button.centerx, survived_menu_button.centery, (170, 210, 255), amount=24, speed=2.6, life=34, style="dot")
 
 
 def begin_round_transition(choice_index):
     global game_state, selected_choice_index, selected_choice_name, choice_pop_timer
-    global choice_fade_timer, loading_timer, loading_duration, inspected_choice_index
+    global inspected_choice_index
 
     if choice_index < 0 or choice_index >= len(current_choices):
         return
@@ -370,15 +510,13 @@ def begin_round_transition(choice_index):
     selected_choice_index = choice_index
     selected_choice_name = choice_name
     inspected_choice_index = None
+    play_sound("select")
     choice_pop_timer = choice_pop_duration
-    choice_fade_timer = choice_fade_duration
-    loading_duration = 82
-    loading_timer = loading_duration
     game_state = "choice_confirm"
 
     card = choices_rects[choice_index]
-    spawn_particles(card.centerx, card.centery, tier_color_for(choice_name), amount=30, speed=4.4, life=32, size=4, style="spark")
-    spawn_panic_ripples(card.centerx, card.centery, tier_color_for(choice_name))
+    particle_system.spawn_particles(card.centerx, card.centery, tier_color_for(choice_name), amount=30, speed=4.4, life=32, size=4, style="spark")
+    particle_system.spawn_panic_ripples(card.centerx, card.centery, tier_color_for(choice_name))
 
 
 def finish_round_transition():
@@ -392,7 +530,7 @@ def finish_round_transition():
     selected_choice_index = None
     selected_choice_name = None
     start_new_round(choice_name)
-    round_intro_timer = round_intro_duration
+    round_intro_timer = max(0, round_intro_duration - round_intro_fade_duration)
 
 
 def spawn_collectible():
@@ -459,12 +597,24 @@ def weaver_shared_center(weavers):
     return (int(center_x), int(center_y))
 
 
-def weaver_shared_radius(buff_level, count):
-    return max(155, 620 - buff_level * 85 - max(0, count - 1) * 38)
+def weaver_pressure_for_count(count):
+    return max(weaver_pressure_level, count)
 
 
-def weaver_tension_limit(buff_level, count):
-    return max(58, 112 - buff_level * 12 - max(0, count - 1) * 12)
+def weaver_shared_radius(buff_level, count, pressure_level=0):
+    pressure = max(pressure_level, count)
+    return max(165, 620 - buff_level * 85 - max(0, pressure - 1) * 52 - max(0, count - 1) * 14)
+
+
+def weaver_tension_limit(buff_level, count, pressure_level=0):
+    pressure = max(pressure_level, count)
+    return max(55, 112 - buff_level * 12 - max(0, pressure - 1) * 12 - max(0, count - 1) * 4)
+
+
+def weaver_start_timer():
+    pressure = max(0, weaver_pressure_level - 1)
+    head_start = min(150, pressure * 45)
+    return random.randint(head_start, head_start + 30)
 
 
 def apply_sentinel_spacing():
@@ -505,15 +655,17 @@ def reset_game_data():
     global warden_queued, warden_spawn_timer, easy_escape_streak, force_hard_selection
     global forced_hard_cycles
     global pressure_round_active, death_shake_timer, death_flash_timer, panic_shake_timer
-    global selected_choice_index, selected_choice_name, choice_pop_timer, choice_fade_timer
+    global selected_choice_index, selected_choice_name, choice_pop_timer
     global round_intro_timer, selection_intro_timer, menu_intro_timer
     global survived_choice_active, survived_transition_target, survived_text_timer, survived_fade_timer
     global main_menu_return_unlocked
     global menu_pop_timer
+    global weaver_pressure_level
+    global movement_sound_cooldown
 
     enemies = []
     collectibles = []
-    particles.clear()
+    particle_system.clear()
     picked_curses.clear()
     easy_choice_cooldowns.clear()
     recent_enemy_choices.clear()
@@ -526,13 +678,13 @@ def reset_game_data():
     force_hard_selection = False
     forced_hard_cycles = 0
     pressure_round_active = False
+    weaver_pressure_level = 0
     death_shake_timer = 0
     death_flash_timer = 0
     panic_shake_timer = 0
     selected_choice_index = None
     selected_choice_name = None
     choice_pop_timer = 0
-    choice_fade_timer = 0
     round_intro_timer = 0
     selection_intro_timer = 0
     menu_intro_timer = 0
@@ -542,11 +694,14 @@ def reset_game_data():
     survived_text_timer = 0
     survived_fade_timer = 0
     menu_pop_timer = 0
+    movement_sound_cooldown = 0
 
 
 def start_new_round(name):
+    """Initialize the next round and spawn the chosen enemy."""
     global game_state, round_timer, round_number, collectible_spawn_timer
     global warden_queued, warden_spawn_timer
+    global weaver_pressure_level
 
     if name is None:
         return
@@ -562,6 +717,9 @@ def start_new_round(name):
 
     if name in curse_names and name not in picked_curses:
         picked_curses.append(name)
+
+    if name == "The Weaver":
+        weaver_pressure_level += 1
 
     if name == "Warden":
         warden_queued = True
@@ -588,7 +746,7 @@ def start_new_round(name):
             move_void_to_safe_spot(e)
 
         e.state = "idle"
-        e.timer = random.randint(0, 30)
+        e.timer = weaver_start_timer() if e.name == "The Weaver" else random.randint(0, 30)
         e.speed = 0
         e.dir_x = 0
         e.dir_y = 0
@@ -652,272 +810,15 @@ def handle_debug_key(key):
         revive_player()
 
 
-def draw_centered_text(text, text_font, color, rect):
-    rendered = text_font.render(text, True, color)
-    x = rect.centerx - rendered.get_width() // 2
-    y = rect.centery - rendered.get_height() // 2
-    screen.blit(rendered, (x, y))
-
-
-def draw_wrapped_text(text, text_font, color, rect, line_gap=4):
-    words = text.split()
-    lines = []
-    current_line = ""
-
-    for word in words:
-        test_line = word if current_line == "" else f"{current_line} {word}"
-        if text_font.size(test_line)[0] <= rect.width:
-            current_line = test_line
-        else:
-            if current_line:
-                lines.append(current_line)
-            current_line = word
-
-    if current_line:
-        lines.append(current_line)
-
-    y = rect.y
-    for line in lines:
-        rendered = text_font.render(line, True, color)
-        screen.blit(rendered, (rect.x, y))
-        y += rendered.get_height() + line_gap
-        if y > rect.bottom:
-            break
-
-
-def clamp(value, low, high):
-    return max(low, min(high, value))
-
-
-def brighten(color, amount):
-    return tuple(clamp(channel + amount, 0, 255) for channel in color)
-
-
-def spawn_particles(x, y, color, amount=16, speed=3.0, life=34, size=3, style="dot"):
-    for _ in range(amount):
-        angle = random.uniform(0, math.tau)
-        velocity = random.uniform(0.6, speed)
-        max_life = random.randint(max(8, life // 2), life)
-        particles.append(
-            {
-                "x": float(x),
-                "y": float(y),
-                "vx": math.cos(angle) * velocity,
-                "vy": math.sin(angle) * velocity,
-                "life": max_life,
-                "max_life": max_life,
-                "color": brighten(color, random.randint(-14, 24)),
-                "size": random.randint(2, size),
-                "style": style,
-                "spin": random.uniform(-0.25, 0.25),
-                "angle": angle,
-                "damp": random.uniform(0.88, 0.97),
-                "gravity": random.uniform(-0.015, 0.045),
-            }
-        )
-
-
-def spawn_edge_particles(rect, color, amount=3, speed=1.8, life=22):
-    for _ in range(amount):
-        edge = random.randrange(4)
-        if edge == 0:
-            x, y = random.randint(rect.left, rect.right), rect.top
-            angle = random.uniform(-math.pi, 0)
-        elif edge == 1:
-            x, y = random.randint(rect.left, rect.right), rect.bottom
-            angle = random.uniform(0, math.pi)
-        elif edge == 2:
-            x, y = rect.left, random.randint(rect.top, rect.bottom)
-            angle = random.uniform(math.pi / 2, math.pi * 1.5)
-        else:
-            x, y = rect.right, random.randint(rect.top, rect.bottom)
-            angle = random.uniform(-math.pi / 2, math.pi / 2)
-
-        velocity = random.uniform(0.35, speed)
-        max_life = random.randint(max(8, life // 2), life)
-        particles.append(
-            {
-                "x": float(x),
-                "y": float(y),
-                "vx": math.cos(angle) * velocity,
-                "vy": math.sin(angle) * velocity,
-                "life": max_life,
-                "max_life": max_life,
-                "color": brighten(color, random.randint(-20, 32)),
-                "size": random.randint(2, 4),
-                "style": random.choice(["spark", "dot"]),
-                "spin": random.uniform(-0.35, 0.35),
-                "angle": angle,
-                "damp": random.uniform(0.84, 0.93),
-                "gravity": random.uniform(-0.03, 0.02),
-            }
-        )
-
-
-def spawn_panic_ripples(x, y, color):
-    for size in (16, 30, 48):
-        particles.append(
-            {
-                "x": float(x),
-                "y": float(y),
-                "vx": 0.0,
-                "vy": 0.0,
-                "life": 18 + size // 4,
-                "max_life": 18 + size // 4,
-                "color": color,
-                "size": size,
-                "style": "ring",
-                "spin": 0.0,
-                "angle": 0.0,
-                "damp": 1.0,
-                "gravity": 0.0,
-            }
-        )
-
-
-def spawn_motion_trail(rect, previous_center, color, amount=2, spark=False):
-    current_center = rect.center
-    dx = current_center[0] - previous_center[0]
-    dy = current_center[1] - previous_center[1]
-    distance = math.hypot(dx, dy)
-    if distance < 0.7:
-        return
-
-    dir_x = dx / distance
-    dir_y = dy / distance
-    speed = min(5.5, 0.4 + distance * 0.26)
-    origin_x = current_center[0] - dir_x * rect.width * 0.42
-    origin_y = current_center[1] - dir_y * rect.height * 0.42
-
-    for _ in range(amount):
-        side = random.uniform(-rect.width * 0.32, rect.width * 0.32)
-        x = origin_x + (-dir_y * side) + random.uniform(-3, 3)
-        y = origin_y + (dir_x * side) + random.uniform(-3, 3)
-        max_life = random.randint(12, 24)
-        particles.append(
-            {
-                "x": float(x),
-                "y": float(y),
-                "vx": -dir_x * random.uniform(0.5, speed) + random.uniform(-0.45, 0.45),
-                "vy": -dir_y * random.uniform(0.5, speed) + random.uniform(-0.45, 0.45),
-                "life": max_life,
-                "max_life": max_life,
-                "color": brighten(color, random.randint(-42, 18)),
-                "size": random.randint(3, 7),
-                "style": "spark" if spark and random.random() < 0.38 else "trail",
-                "spin": random.uniform(-0.18, 0.18),
-                "angle": math.atan2(dy, dx) + math.pi + random.uniform(-0.45, 0.45),
-                "damp": random.uniform(0.80, 0.91),
-                "gravity": random.uniform(-0.02, 0.025),
-            }
-        )
-
-
-def spawn_enemy_motion_trail(enemy_obj, previous_center):
-    distance = math.hypot(
-        enemy_obj.rect.centerx - previous_center[0],
-        enemy_obj.rect.centery - previous_center[1],
-    )
-    if distance < 0.7:
-        return
-
-    base_color = enemy.enemy_color(enemy_obj.name)
-    if enemy_obj.name == "Stalker":
-        spawn_motion_trail(enemy_obj.rect, previous_center, base_color, amount=4, spark=True)
-    elif enemy_obj.name == "Drifter":
-        spawn_motion_trail(enemy_obj.rect, previous_center, (95, 230, 255), amount=3, spark=True)
-    elif enemy_obj.name == "Pulse":
-        spawn_motion_trail(enemy_obj.rect, previous_center, (255, 245, 90), amount=3)
-    elif enemy_obj.name == "Sentinel":
-        spawn_motion_trail(enemy_obj.rect, previous_center, base_color, amount=2)
-    elif enemy_obj.name == "Reaper" and distance > 80:
-        spawn_particles(previous_center[0], previous_center[1], base_color, amount=16, speed=3.8, life=28, size=4, style="spark")
-        spawn_panic_ripples(enemy_obj.rect.centerx, enemy_obj.rect.centery, base_color)
-    else:
-        spawn_motion_trail(enemy_obj.rect, previous_center, base_color, amount=2)
-
-
-def spawn_void_particles(void_enemy, active=False):
-    amount = 4 if active else 3
-    radius = 36 if active else 28
-    for _ in range(amount):
-        angle = random.uniform(0, math.tau)
-        distance = random.uniform(14, radius)
-        x = void_enemy.rect.centerx + math.cos(angle) * distance
-        y = void_enemy.rect.centery + math.sin(angle) * distance
-        max_life = random.randint(22, 42)
-        inward_speed = random.uniform(0.04, 0.22 if active else 0.14)
-        orbit_speed = random.uniform(0.45, 1.15 if active else 0.85)
-        orbit_dir = random.choice([-1, 1])
-        if random.random() < (0.45 if active else 0.28):
-            inward_speed = random.uniform(0.45, 1.25 if active else 0.85)
-            orbit_speed *= 0.45
-        particles.append(
-            {
-                "x": float(x),
-                "y": float(y),
-                "vx": -math.cos(angle) * inward_speed + (-math.sin(angle) * orbit_speed * orbit_dir),
-                "vy": -math.sin(angle) * inward_speed + (math.cos(angle) * orbit_speed * orbit_dir),
-                "life": max_life,
-                "max_life": max_life,
-                "color": random.choice([(4, 4, 7), (12, 10, 18), (25, 18, 34), (45, 32, 62)]),
-                "size": random.randint(2, 7 if active else 5),
-                "style": random.choice(["dot", "trail"]),
-                "spin": random.uniform(-0.12, 0.12),
-                "angle": angle + (math.pi / 2 * orbit_dir),
-                "damp": random.uniform(0.93, 0.98),
-                "gravity": 0.0,
-            }
-        )
-
-
-def update_particles():
-    for particle in particles[:]:
-        if particle.get("style") == "spark":
-            particle["vx"] += random.uniform(-0.08, 0.08)
-            particle["vy"] += random.uniform(-0.08, 0.08)
-        particle["x"] += particle["vx"]
-        particle["y"] += particle["vy"]
-        particle["vx"] *= particle.get("damp", 0.96)
-        particle["vy"] = particle["vy"] * particle.get("damp", 0.96) + particle.get("gravity", 0.03)
-        particle["angle"] += particle.get("spin", 0.0)
-        particle["life"] -= 1
-        if particle["life"] <= 0:
-            particles.remove(particle)
-
-
-def draw_particles():
-    for particle in particles:
-        alpha = max(0.0, min(1.0, particle["life"] / particle["max_life"]))
-        x, y = int(particle["x"]), int(particle["y"])
-        color = particle["color"]
-        style = particle.get("style", "dot")
-
-        if style == "spark":
-            length = max(4, int(particle["size"] * 4 * alpha))
-            dx = math.cos(particle["angle"]) * length
-            dy = math.sin(particle["angle"]) * length
-            pygame.draw.line(screen, color, (x, y), (int(x - dx), int(y - dy)), max(1, int(2 * alpha)))
-        elif style == "trail":
-            size = max(2, int(particle["size"] * alpha))
-            trail_rect = pygame.Rect(x - size // 2, y - size // 2, size, size)
-            pygame.draw.rect(screen, color, trail_rect)
-        elif style == "ring":
-            radius = max(2, int(particle["size"] * (1.0 - alpha * 0.45)))
-            pygame.draw.circle(screen, color, (x, y), radius, max(1, int(3 * alpha)))
-        else:
-            radius = max(1, int(particle["size"] * alpha))
-            pygame.draw.circle(screen, color, (x, y), radius)
-
-
 def trigger_death_effect():
     global death_shake_timer, death_flash_timer, panic_shake_timer
 
+    play_sound("death")
     death_shake_timer = 42
     panic_shake_timer = 58
     death_flash_timer = 22
-    spawn_panic_ripples(player_box.rect.centerx, player_box.rect.centery, (255, 45, 70))
-    spawn_particles(
+    particle_system.spawn_panic_ripples(player_box.rect.centerx, player_box.rect.centery, (255, 45, 70))
+    particle_system.spawn_particles(
         player_box.rect.centerx,
         player_box.rect.centery,
         (255, 55, 80),
@@ -927,7 +828,7 @@ def trigger_death_effect():
         size=6,
         style="spark",
     )
-    spawn_particles(
+    particle_system.spawn_particles(
         player_box.rect.centerx,
         player_box.rect.centery,
         (245, 245, 255),
@@ -943,26 +844,6 @@ def kill_player():
     if player_box.alive:
         player_box.die()
         trigger_death_effect()
-
-
-def scaled_rect(rect, scale):
-    width = int(rect.width * scale)
-    height = int(rect.height * scale)
-    return pygame.Rect(rect.centerx - width // 2, rect.centery - height // 2, width, height)
-
-
-def draw_arena_background(fill):
-    screen.fill(fill)
-    grid_color = (
-        max(0, fill[0] - 10),
-        max(0, fill[1] - 10),
-        max(0, fill[2] - 10),
-    )
-    for x in range(0, screen_width, 40):
-        pygame.draw.line(screen, grid_color, (x, 0), (x, screen_height))
-    for y in range(0, screen_height, 40):
-        pygame.draw.line(screen, grid_color, (0, y), (screen_width, y))
-    pygame.draw.rect(screen, (10, 10, 14), (0, 0, screen_width, screen_height), 5)
 
 
 def draw_button(rect, fill, label, hovered=False, pressed=False, pop_progress=0.0):
@@ -988,9 +869,9 @@ def draw_button(rect, fill, label, hovered=False, pressed=False, pop_progress=0.
             min(255, fill[2] + 28),
         )
         if frame_count % 3 == 0:
-            spawn_edge_particles(draw_rect, button_fill, amount=2, speed=2.5, life=18)
+            particle_system.spawn_edge_particles(draw_rect, button_fill, amount=2, speed=2.5, life=18)
     if pop_progress > 0 and frame_count % 2 == 0:
-        spawn_edge_particles(draw_rect, brighten(fill, 36), amount=4, speed=3.0, life=18)
+        particle_system.spawn_edge_particles(draw_rect, brighten(fill, 36), amount=4, speed=3.0, life=18)
 
     shadow = draw_rect.move(6, 8 if hovered else 6)
     pygame.draw.rect(screen, (8, 8, 12), shadow)
@@ -1010,7 +891,7 @@ def draw_button(rect, fill, label, hovered=False, pressed=False, pop_progress=0.
                 1,
             )
     text_rect = draw_rect.move(random.choice([-1, 0, 1]) if hovered else 0, random.choice([-1, 0, 1]) if hovered else 0)
-    draw_centered_text(label, menu_font, text_color_for(button_fill), text_rect)
+    draw_centered_text(screen, label, menu_font, text_color_for(button_fill), text_rect)
 
 
 def choice_info_button_rect(card_rect):
@@ -1098,7 +979,7 @@ def draw_choice_card(rect, name, inspected=False, hovered=False, selected=False,
         rect = scaled_rect(rect, pop_scale)
         active = True
         if frame_count % 2 == 0:
-            spawn_edge_particles(rect, tier_color_for(name), amount=4, speed=3.0, life=18)
+            particle_system.spawn_edge_particles(rect, tier_color_for(name), amount=4, speed=3.0, life=18)
 
     if active:
         if tier == "EASY":
@@ -1107,14 +988,14 @@ def draw_choice_card(rect, name, inspected=False, hovered=False, selected=False,
                 int(math.cos(frame_count * 0.10) * 1.0),
             )
             if frame_count % 10 == 0:
-                spawn_edge_particles(rect, tier_color_for(name), amount=1, speed=0.9, life=30)
+                particle_system.spawn_edge_particles(rect, tier_color_for(name), amount=1, speed=0.9, life=30)
         elif tier in ["HARD", "CURSE"]:
             rect = rect.move(
                 random.choice([-2, -1, 0, 1, 2]) if frame_count % 3 == 0 else 0,
                 random.choice([-2, -1, 0, 1, 2]) if frame_count % 4 == 0 else 0,
             )
             if frame_count % 3 == 0:
-                spawn_edge_particles(rect, tier_color_for(name), amount=3 if hovered else 2, speed=2.4, life=18)
+                particle_system.spawn_edge_particles(rect, tier_color_for(name), amount=3 if hovered else 2, speed=2.4, life=18)
         else:
             rect = rect.move(
                 random.choice([-1, 0, 1]) if frame_count % 6 == 0 else 0,
@@ -1130,8 +1011,8 @@ def draw_choice_card(rect, name, inspected=False, hovered=False, selected=False,
             pygame.draw.rect(screen, (210, 210, 235), rect.inflate(8, 8), 1)
         tier_rect = pygame.Rect(rect.x, rect.y, rect.width, 26)
         pygame.draw.rect(screen, tier_color_for(name), tier_rect)
-        draw_centered_text("EMPTY", small_font, (210, 210, 220), tier_rect)
-        draw_centered_text("-", big_font, (110, 110, 126), rect)
+        draw_centered_text(screen, "EMPTY", small_font, (210, 210, 220), tier_rect)
+        draw_centered_text(screen, "-", big_font, (110, 110, 126), rect)
         return
 
     fill = enemy.enemy_color(name)
@@ -1162,13 +1043,13 @@ def draw_choice_card(rect, name, inspected=False, hovered=False, selected=False,
     tier_rect = pygame.Rect(rect.x, rect.y, rect.width, 26)
     pygame.draw.rect(screen, tier_fill, tier_rect)
     pygame.draw.line(screen, (255, 255, 255), tier_rect.bottomleft, tier_rect.bottomright, 2)
-    draw_centered_text(tier_for(name), small_font, text_color_for(tier_fill), tier_rect)
+    draw_centered_text(screen, tier_for(name), small_font, text_color_for(tier_fill), tier_rect)
 
     icon = pygame.Rect(rect.centerx - 21, rect.y + 41, 42, 42)
     draw_choice_icon(icon, name, fill, tier_fill)
 
     name_rect = pygame.Rect(rect.x + 6, rect.y + 88, rect.width - 12, 34)
-    draw_centered_text(name, font, label_color, name_rect)
+    draw_centered_text(screen, name, font, label_color, name_rect)
 
     info_rect = choice_info_button_rect(rect)
     if inspected and info_click_timer > 0:
@@ -1176,7 +1057,7 @@ def draw_choice_card(rect, name, inspected=False, hovered=False, selected=False,
         pygame.draw.rect(screen, (255, 225, 95), info_rect.inflate(pulse * 2, pulse * 2), 2)
     pygame.draw.rect(screen, (12, 12, 16), info_rect)
     pygame.draw.rect(screen, (255, 255, 255), info_rect, 2)
-    draw_centered_text("?", small_font, (255, 255, 255), info_rect)
+    draw_centered_text(screen, "?", small_font, (255, 255, 255), info_rect)
 
 
 def draw_choice_info_panel(name):
@@ -1192,7 +1073,7 @@ def draw_choice_info_panel(name):
     close_rect = pygame.Rect(panel.right - 32, panel.y + 10, 20, 20)
     pygame.draw.rect(screen, (35, 35, 46), close_rect)
     pygame.draw.rect(screen, (255, 255, 255), close_rect, 2)
-    draw_centered_text("X", small_font, (255, 255, 255), close_rect)
+    draw_centered_text(screen, "X", small_font, (255, 255, 255), close_rect)
 
     title_rect = pygame.Rect(panel.x + 18, panel.y + 12, panel.width - 58, 24)
     title_text = f"{name} | {tier_for(name)}"
@@ -1268,7 +1149,7 @@ def draw_survived_button(rect, label, anxious=False):
         fill = (120 + int(anxiety * 65), 24, 34)
         border = (255, 80 + int(anxiety * 80), 95)
         if frame_count % max(2, 8 - min(5, round_number // 3)) == 0:
-            spawn_edge_particles(draw_rect, border, amount=2 + int(anxiety * 3), speed=1.8 + anxiety * 2.4, life=18)
+            particle_system.spawn_edge_particles(draw_rect, border, amount=2 + int(anxiety * 3), speed=1.8 + anxiety * 2.4, life=18)
     else:
         sway_x = int(math.sin(frame_count * 0.08) * 2)
         sway_y = int(math.cos(frame_count * 0.07) * 1)
@@ -1276,7 +1157,7 @@ def draw_survived_button(rect, label, anxious=False):
         fill = (30, 48, 78)
         border = (150, 190, 255)
         if hovered and frame_count % 8 == 0:
-            spawn_edge_particles(draw_rect, border, amount=1, speed=0.9, life=28)
+            particle_system.spawn_edge_particles(draw_rect, border, amount=1, speed=0.9, life=28)
 
     if hovered:
         draw_rect = draw_rect.inflate(8, 4)
@@ -1297,7 +1178,7 @@ def draw_survived_button(rect, label, anxious=False):
     else:
         pygame.draw.rect(screen, (210, 230, 255), draw_rect.inflate(6, 6), 1)
 
-    draw_centered_text(label, small_font, (255, 255, 255), draw_rect)
+    draw_centered_text(screen, label, small_font, (255, 255, 255), draw_rect)
 
 
 def draw_survived_overlay():
@@ -1324,24 +1205,14 @@ def draw_survived_overlay():
 
     visible_timer = survived_text_timer if survived_text_timer > 0 else frame_count
     if visible_timer % 8 == 0:
-        spawn_edge_particles(pygame.Rect(260, 214, 280, 62), (170, 255, 190), amount=2, speed=1.6, life=24)
-
-
-def draw_loading_screen():
-    progress = 1.0 - (loading_timer / loading_duration)
-    progress = max(0.0, min(1.0, progress))
-
-    screen.fill((0, 0, 0))
-    bar = pygame.Rect(180, 290, 440, 20)
-    fill = pygame.Rect(bar.x, bar.y, int(bar.width * progress), bar.height)
-    pygame.draw.rect(screen, (255, 255, 255), fill)
-    pygame.draw.rect(screen, (255, 255, 255), bar, 2)
-    label = small_font.render("LOADING", True, (210, 220, 255))
-    screen.blit(label, (400 - label.get_width() // 2, 258))
+        particle_system.spawn_edge_particles(pygame.Rect(260, 214, 280, 62), (170, 255, 190), amount=2, speed=1.6, life=24)
 
 
 refresh_enemy_choices()
+init_audio()
+update_audio()
 
+# Main game loop: process input, update logic, render each frame.
 while running:
     frame_count += 1
     mouse_pos = pygame.mouse.get_pos()
@@ -1356,13 +1227,15 @@ while running:
                 menu_click_timer = 10
                 begin_menu_start_transition()
             elif exit_button.collidepoint(event.pos):
+                play_sound("back")
                 menu_click_timer = 10
-                spawn_particles(exit_button.centerx, exit_button.centery, (255, 95, 105), amount=34, speed=5.0, style="spark")
+                particle_system.spawn_particles(exit_button.centerx, exit_button.centery, (255, 95, 105), amount=34, speed=5.0, style="spark")
                 pending_exit = True
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and game_state == "choosing":
             if inspected_choice_index is not None and choice_info_close_rect().collidepoint(event.pos):
                 inspected_choice_index = None
                 info_click_timer = 8
+                play_sound("back")
                 continue
 
             clicked_info_button = False
@@ -1370,7 +1243,8 @@ while running:
                 if choice_info_button_rect(box).collidepoint(event.pos) and current_choices[i] is not None:
                     inspected_choice_index = None if inspected_choice_index == i else i
                     info_click_timer = 12
-                    spawn_particles(event.pos[0], event.pos[1], (255, 225, 95), amount=18, speed=3.4, life=24, style="spark")
+                    play_sound("click")
+                    particle_system.spawn_particles(event.pos[0], event.pos[1], (255, 225, 95), amount=18, speed=3.4, life=24, style="spark")
                     clicked_info_button = True
                     break
 
@@ -1378,7 +1252,7 @@ while running:
                 if not choice_info_panel_rect().collidepoint(event.pos):
                     inspected_choice_index = None
 
-    update_particles()
+    particle_system.update_particles()
     if menu_click_timer > 0:
         menu_click_timer -= 1
     if menu_pop_timer > 0:
@@ -1411,21 +1285,12 @@ while running:
         if menu_pop_timer <= 0:
             finish_menu_start_transition()
 
-    elif game_state == "loading":
+    elif game_state in ["loading", "selection_loading", "menu_loading", "round_loading"]:
         loading_timer -= 1
+        if not transition_switched and loading_timer <= loading_duration // 2:
+            complete_fade_transition_step()
         if loading_timer <= 0:
-            player_box.set_position(400, 500, center=True)
-            game_state = "choosing"
-
-    elif game_state == "selection_loading":
-        loading_timer -= 1
-        if loading_timer <= 0:
-            finish_selection_loading()
-
-    elif game_state == "menu_loading":
-        loading_timer -= 1
-        if loading_timer <= 0:
-            game_state = "menu_intro"
+            finish_fade_transition()
 
     elif game_state == "selection_intro":
         if selection_intro_timer > 0:
@@ -1437,7 +1302,8 @@ while running:
         if survived_fade_timer > 0:
             survived_fade_timer -= 1
         else:
-            begin_menu_return_loading()
+            complete_menu_return_transition()
+            game_state = "menu_intro"
 
     elif game_state == "menu_intro":
         if menu_intro_timer > 0:
@@ -1448,7 +1314,8 @@ while running:
     elif game_state == "choosing":
         previous_player_center = player_box.rect.center
         player_box.move(keys)
-        spawn_motion_trail(player_box.rect, previous_player_center, player_box.color, amount=2)
+        update_movement_sound()
+        particle_system.spawn_motion_trail(player_box.rect, previous_player_center, player_box.color, amount=2)
         if player_box.rect.colliderect(survived_menu_button):
             begin_selection_menu_return()
         for i, box in enumerate(choices_rects):
@@ -1460,29 +1327,18 @@ while running:
         if choice_pop_timer > 0:
             choice_pop_timer -= 1
         else:
-            game_state = "round_fade_in"
-
-    elif game_state == "round_fade_in":
-        if choice_fade_timer > 0:
-            choice_fade_timer -= 1
-        else:
-            game_state = "round_loading"
-
-    elif game_state == "round_loading":
-        loading_timer -= 1
-        if loading_timer <= 0:
-            finish_round_transition()
+            begin_fade_transition("round_loading", "playing")
 
     elif game_state == "playing":
         if not player_box.alive:
             if keys[pygame.K_r]:
+                play_sound("select")
                 reset_game_data()
                 player_box = player.Player(400, 500)
                 refresh_enemy_choices()
                 game_state = "choosing"
             elif keys[pygame.K_m]:
-                player_box = player.Player(400, 500)
-                menu_player_enabled = False
+                play_sound("back")
                 begin_menu_return_loading()
         elif round_intro_timer > 0:
             round_intro_timer -= 1
@@ -1504,10 +1360,11 @@ while running:
             buff_mult = round_buff_mult()
             weavers = weaver_enemies()
             weaver_count = len(weavers)
+            weaver_pressure = weaver_pressure_for_count(weaver_count)
             active_weaver_count = max(1, sum(1 for w in weavers if getattr(w, "link_active", False)))
             shared_weaver_center = weaver_shared_center(weavers)
-            shared_weaver_radius = weaver_shared_radius(buff_level, weaver_count)
-            shared_weaver_tension_limit = weaver_tension_limit(buff_level, weaver_count)
+            shared_weaver_radius = weaver_shared_radius(buff_level, weaver_count, weaver_pressure)
+            shared_weaver_tension_limit = weaver_tension_limit(buff_level, weaver_count, weaver_pressure)
 
             for e in enemies[:]:
                 if e.name == "Warden" and not e.touched:
@@ -1546,7 +1403,7 @@ while running:
                     dist = math.hypot(dx, dy)
                     pull_radius = 170 + buff_level * 24
                     if frame_count % 4 == 0:
-                        spawn_void_particles(e, dist < pull_radius)
+                        particle_system.spawn_void_particles(e, dist < pull_radius)
                     if 0 < dist < pull_radius:
                         pull_strength = 0.020 + buff_level * 0.004
                         pull_cap = 2.9 + buff_level * 0.55
@@ -1555,19 +1412,17 @@ while running:
                         pull_y += (dy / dist) * pull
                 elif e.name == "Drifter":
                     if e.dir_x != 0 or e.dir_y != 0:
-                        lane_width = 55 + buff_level * 4
-                        lane_reach = 260 + buff_level * 22
                         lane_pull = 1.35 + buff_level * 0.18
                         if e.lane_axis == "x":
-                            lane_dist = abs(player_box.rect.centery - e.rect.centery)
-                            ahead_dist = abs(player_box.rect.centerx - e.rect.centerx)
-                            if lane_dist < lane_width and ahead_dist < lane_reach:
-                                pull_x += e.dir_x * lane_pull
+                            toward_drifter = e.rect.centerx - player_box.rect.centerx
+                            touching_line = player_box.rect.top <= e.rect.centery <= player_box.rect.bottom
+                            if touching_line and toward_drifter != 0:
+                                pull_x += (toward_drifter / abs(toward_drifter)) * lane_pull
                         else:
-                            lane_dist = abs(player_box.rect.centerx - e.rect.centerx)
-                            ahead_dist = abs(player_box.rect.centery - e.rect.centery)
-                            if lane_dist < lane_width and ahead_dist < lane_reach:
-                                pull_y += e.dir_y * lane_pull
+                            toward_drifter = e.rect.centery - player_box.rect.centery
+                            touching_line = player_box.rect.left <= e.rect.centerx <= player_box.rect.right
+                            if touching_line and toward_drifter != 0:
+                                pull_y += (toward_drifter / abs(toward_drifter)) * lane_pull
                 elif e.name == "The Weaver" and e.link_active:
                     start = e.rect.center
                     end = player_box.rect.center
@@ -1594,8 +1449,8 @@ while running:
                             moving_toward_weaver = (move_x * toward_x + move_y * toward_y) > 0.2
                             tension_limit = shared_weaver_tension_limit
                             e.tension_limit = tension_limit
-                            shared_weaver_bonus = max(0, weaver_count - 1)
-                            pull_bonus = 1.0 + shared_weaver_bonus * 0.22
+                            shared_weaver_bonus = max(0, weaver_pressure - 1)
+                            pull_bonus = 1.0 + shared_weaver_bonus * 0.16
                             pull_share = pull_bonus / active_weaver_count
                             pull_strength = min(
                                 (5.5 + buff_level * 0.65) * pull_share,
@@ -1624,12 +1479,13 @@ while running:
                             e.tension_timer = 0
             previous_player_center = player_box.rect.center
             player_box.move(keys, pull_x, pull_y)
-            spawn_motion_trail(player_box.rect, previous_player_center, player_box.color, amount=3, spark=True)
+            update_movement_sound()
+            particle_system.spawn_motion_trail(player_box.rect, previous_player_center, player_box.color, amount=3, spark=True)
 
             for e in enemies:
                 previous_enemy_center = e.rect.center
                 e.update(player_box.rect, round_number, collectibles)
-                spawn_enemy_motion_trail(e, previous_enemy_center)
+                particle_system.spawn_enemy_motion_trail(e, previous_enemy_center)
 
             apply_sentinel_spacing()
 
@@ -1650,17 +1506,22 @@ while running:
                 if player_box.rect.colliderect(c):
                     if not time_frozen:
                         collectibles.remove(c)
+                        play_sound("coin")
                         round_timer -= 300
                         spawn_collectible()
                     elif frame_count % 8 == 0:
-                        spawn_edge_particles(c.inflate(8, 8), (255, 95, 95), amount=1, speed=1.0, life=16)
+                        particle_system.spawn_edge_particles(c.inflate(8, 8), (255, 95, 95), amount=1, speed=1.0, life=16)
 
             if round_timer <= 0:
                 begin_survived_transition()
 
-    draw_arena_background(current_bg)
+    update_audio()
+    render_state = visual_game_state()
 
-    if game_state in ["menu", "menu_confirm", "menu_intro"]:
+    draw_arena_background(screen, current_bg, screen_width, screen_height)
+
+    # Main render pass for the current frame.
+    if render_state in ["menu", "menu_confirm", "menu_intro"]:
         title = big_font.render("NULL", True, (230, 230, 255))
         screen.blit(title, (400 - title.get_width() // 2, 105))
         subtitle = font.render("2D CURSE RUN", True, (150, 180, 255))
@@ -1676,22 +1537,22 @@ while running:
         hint = small_font.render("CLICK PLAY TO ENTER SELECTION", True, (175, 190, 230))
         screen.blit(hint, (400 - hint.get_width() // 2, 355))
 
-    elif game_state in ["loading", "selection_loading", "round_loading", "menu_loading"]:
-        draw_loading_screen()
+    elif render_state in ["choosing", "choice_confirm", "selection_intro", "selection_menu_fade"]:
+        selected_for_draw = selected_choice_index if game_state in ["choice_confirm", "round_loading"] else None
+        draw_choosing_screen(selected_for_draw)
 
-    elif game_state in ["choosing", "choice_confirm", "round_fade_in", "selection_intro", "selection_menu_fade"]:
-        draw_choosing_screen(selected_choice_index if game_state in ["choice_confirm", "round_fade_in"] else None)
-
-    elif game_state == "playing":
+    elif render_state == "playing":
         visible_weavers = weaver_enemies()
         if visible_weavers:
             ring_buff_level = round_buff_level()
+            ring_weaver_count = len(visible_weavers)
+            ring_weaver_pressure = weaver_pressure_for_count(ring_weaver_count)
             ring_center = weaver_shared_center(visible_weavers)
-            ring_radius = weaver_shared_radius(ring_buff_level, len(visible_weavers))
+            ring_radius = weaver_shared_radius(ring_buff_level, ring_weaver_count, ring_weaver_pressure)
             ring_color = (255, 45, 65) if any(getattr(e, "thread_tense", False) for e in visible_weavers) else (70, 35, 115)
-            ring_width = 2 if len(visible_weavers) > 1 else 1
+            ring_width = 2 if ring_weaver_count > 1 else 1
             pygame.draw.circle(screen, ring_color, ring_center, ring_radius, ring_width)
-            if len(visible_weavers) > 1:
+            if ring_weaver_count > 1:
                 pygame.draw.circle(screen, (190, 95, 255), ring_center, 7)
 
         for e in enemies:
@@ -1723,11 +1584,18 @@ while running:
                         point = random.random()
                         spark_x = start[0] + (end[0] - start[0]) * point
                         spark_y = start[1] + (end[1] - start[1]) * point
-                        spawn_particles(spark_x, spark_y, color, amount=2, speed=1.8, life=16, size=3, style="spark")
+                        particle_system.spawn_particles(spark_x, spark_y, color, amount=2, speed=1.8, life=16, size=3, style="spark")
                 else:
                     pygame.draw.line(screen, color, start, end, width)
                 if e.thread_tense:
-                    tension_limit = max(1, getattr(e, "tension_limit", 90))
+                    tension_limit = max(
+                        1,
+                        weaver_tension_limit(
+                            round_buff_level(),
+                            len(visible_weavers),
+                            weaver_pressure_for_count(len(visible_weavers)),
+                        ),
+                    )
                     timer_width = int((e.tension_timer / tension_limit) * 70)
                     pygame.draw.rect(screen, (12, 12, 16), (e.rect.centerx - 35, e.rect.y - 16, 70, 7))
                     pygame.draw.rect(screen, color, (e.rect.centerx - 35, e.rect.y - 16, timer_width, 7))
@@ -1762,7 +1630,7 @@ while running:
             freeze_jitter = random.choice([-2, -1, 0, 1, 2]) if frame_count % 3 == 0 else 0
             screen.blit(freeze_txt, (400 - freeze_txt.get_width() // 2 + freeze_jitter, 65))
             if frame_count % 6 == 0:
-                spawn_edge_particles(player_box.rect.inflate(18, 18), (255, 80, 100), amount=2, speed=1.7, life=20)
+                particle_system.spawn_edge_particles(player_box.rect.inflate(18, 18), (255, 80, 100), amount=2, speed=1.7, life=20)
 
         if show_stop:
             msg = "STAY STILL!" if current_bg == warning_color else "TOO LATE!"
@@ -1772,12 +1640,11 @@ while running:
             screen.blit(stop_txt, (stop_x, stop_y))
             if frame_count % 4 == 0:
                 warning_rect = pygame.Rect(265, 105, 270, 76)
-                spawn_edge_particles(warning_rect, (255, 245, 215), amount=3, speed=2.6, life=18)
+                particle_system.spawn_edge_particles(warning_rect, (255, 245, 215), amount=3, speed=2.6, life=18)
 
-    if game_state not in ["loading", "selection_loading", "round_loading", "menu_loading"]:
-        draw_particles()
+    particle_system.draw_particles(screen)
 
-    if game_state in ["choosing", "choice_confirm", "round_fade_in", "selection_intro", "selection_menu_fade", "playing"] or menu_player_enabled:
+    if render_state in ["choosing", "choice_confirm", "selection_intro", "selection_menu_fade", "playing"] or menu_player_enabled:
         player_box.draw(screen)
 
     if debug_mode:
@@ -1790,12 +1657,6 @@ while running:
             (255, 230, 130),
         )
         screen.blit(debug_txt, (debug_rect.x + 9, debug_rect.y + 8))
-
-    if game_state == "round_fade_in":
-        fade_progress = 1.0 - (choice_fade_timer / max(1, choice_fade_duration))
-        fade = pygame.Surface((800, 600), pygame.SRCALPHA)
-        fade.fill((0, 0, 0, int(255 * max(0.0, min(1.0, fade_progress)))))
-        screen.blit(fade, (0, 0))
 
     if game_state == "selection_intro":
         fade_progress = selection_intro_timer / max(1, selection_intro_duration)
@@ -1813,6 +1674,11 @@ while running:
         fade_progress = menu_intro_timer / max(1, menu_intro_duration)
         fade = pygame.Surface((800, 600), pygame.SRCALPHA)
         fade.fill((0, 0, 0, int(255 * max(0.0, min(1.0, fade_progress)))))
+        screen.blit(fade, (0, 0))
+
+    if game_state in ["loading", "selection_loading", "round_loading", "menu_loading"]:
+        fade = pygame.Surface((800, 600), pygame.SRCALPHA)
+        fade.fill((0, 0, 0, fade_transition_alpha()))
         screen.blit(fade, (0, 0))
 
     if game_state == "playing" and player_box.alive and round_intro_timer > 0:
@@ -1848,7 +1714,7 @@ while running:
             flash.fill((255, 45, 70, death_flash_timer * 10))
             screen.blit(flash, (0, 0))
 
-        draw_particles()
+        particle_system.draw_particles(screen)
 
         died_txt = big_font.render("DIED!", True, (255, 60, 70))
         restart_txt = menu_font.render("PRESS [R] RESTART    [M] MENU", True, (255, 255, 255))

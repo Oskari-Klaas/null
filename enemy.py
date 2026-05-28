@@ -1,9 +1,12 @@
+"""Enemy behavior, movement, and rendering utilities."""
+
 import math
 import random
 
 import pygame
 
 
+# Mapping of enemy type to display color.
 ENEMY_COLORS = {
     "Stalker": (255, 50, 50),
     "Sentinel": (0, 255, 255),
@@ -19,23 +22,29 @@ ENEMY_COLORS = {
 
 
 def enemy_color(name):
+    """Return the color assigned to the given enemy type."""
     return ENEMY_COLORS.get(name, (200, 200, 200))
 
 
 def outline_color(fill):
+    """Choose a contrasting outline color based on brightness."""
     brightness = fill[0] * 0.299 + fill[1] * 0.587 + fill[2] * 0.114
     return (245, 245, 255) if brightness < 80 else (12, 12, 16)
 
 
 def buff_level_for(round_num):
+    """Calculate buff tiers for enemy strength based on current round."""
     return max(0, (round_num - 5) // 5)
 
 
 def buff_mult_for(round_num):
+    """Return a speed multiplier that scales with round buffs."""
     return 1.0 + buff_level_for(round_num) * 0.18
 
 
 class Enemy:
+    """Represent a game enemy, its state, movement, and rendering."""
+
     def __init__(self, start_x, start_y, name="Stalker"):
         self.name = name
         self.rect = pygame.Rect(start_x, start_y, 50, 50)
@@ -65,6 +74,7 @@ class Enemy:
         self.drift_origin_y = self.exact_y
 
     def choose_drifter_direction(self, blocked=None):
+        """Pick a new direction for Drifter enemies, avoiding blocked axes."""
         if blocked is None:
             blocked = []
 
@@ -81,6 +91,7 @@ class Enemy:
         return abs(self.exact_y - self.drift_origin_y) >= 300
 
     def update(self, player_rect, round_num=1, collectibles=None):
+        """Update enemy timers, state, and movement each frame."""
         if collectibles is None:
             collectibles = []
 
@@ -126,7 +137,7 @@ class Enemy:
 
         elif self.name == "Sentinel":
             self.state = "active"
-            self.speed = min(4.85, 3.2 + buff_level * 0.35)
+            self.speed = min(4.85, 3.0 + buff_level * 0.35)
             if dist != 0:
                 self.dir_x, self.dir_y = dx / dist, dy / dist
 
@@ -203,6 +214,7 @@ class Enemy:
         self._move_and_bounce()
 
     def _move_and_bounce(self):
+        """Move the enemy and handle screen boundary bouncing when appropriate."""
         if self.name in ["Void", "Warden", "Stoplight", "Reaper"] or self.speed == 0:
             self.rect.topleft = (int(self.exact_x), int(self.exact_y))
             return
@@ -240,6 +252,7 @@ class Enemy:
         self.rect.topleft = (int(self.exact_x), int(self.exact_y))
 
     def draw(self, screen):
+        """Render the enemy visuals on the given screen surface."""
         if self.name == "Stoplight":
             return
 
