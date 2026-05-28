@@ -29,8 +29,19 @@ class Player:
         if not self.alive:
             return
 
-        dx = (keys[pygame.K_d] - keys[pygame.K_a]) * self.speed
-        dy = (keys[pygame.K_s] - keys[pygame.K_w]) * self.speed
+        right = int(bool(keys[pygame.K_d] or keys[pygame.K_RIGHT]))
+        left = int(bool(keys[pygame.K_a] or keys[pygame.K_LEFT]))
+        down = int(bool(keys[pygame.K_s] or keys[pygame.K_DOWN]))
+        up = int(bool(keys[pygame.K_w] or keys[pygame.K_UP]))
+        
+        dx = (right - left) * self.speed
+        dy = (down - up) * self.speed
+        
+        # Normalize diagonal movement
+        if dx != 0 and dy != 0:
+            dx *= 0.707
+            dy *= 0.707
+        
         self.moving = dx != 0 or dy != 0
 
         self.pos_x += dx + pull_x
