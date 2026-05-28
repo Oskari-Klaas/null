@@ -1,5 +1,38 @@
-🎮 NullNull on tempokas ja minimalistlik ellujäämismäng, mis on loodud Pythoni ja Pygame'i raamistikuga. See on mäng, kus iga sinu otsus muudab areeni ohtlikumaks. Kui kaua suudad sina vastu pidada tühjuses, kus vaenlaste võrk tõmbub järjest koomale?📝 ÜlevaadeMängus Null juhid sa väikest ruutu pimedas ja reaktiivses keskkonnas. Sinu eesmärk on lihtne: jää ellu kuni taimeri lõpuni. Kuid mäng muutub iga raundiga raskemaks, sest sa pead ise valima oma järgmise "koormuse". Pärast iga ellujäämist pakub mäng sulle kolme uut vaenlast või "cursed" efekti – sinu valik määrab, milliseks kujuneb järgmine raund.✨ PõhiomadusedDünaamiline valikusüsteem: Iga vooru lõpus valid sa ise järgmise ohu. Kas valid ennustatava Sentineli, rida vahetava Drifteri või kiire ja ohtliku Reaperi?Erinevad vaenlaste arhetüübid:Tavalised vaenlased: Jälitajad (Stalker), ridade tõmbajad (Drifter) ja liikumatud valvurid.Erilised ohud: Teleporditav Reaper, pulseeriv Pulse ja ekraani läbiv The Weaver.Niristused (Curses): Modifikaatorid nagu Stoplight (mis sunnib sind paigal seisma) või Warden (mis külmutab aja kuni puudutuseni).Kasvav raskusaste: Vaenlased saavad raundide edenedes kiirust ja uusi käitumismustreid (buffid).Lihvitud visuaalid ja heli: Ekraani värinad (screen shake), osakeste süsteemid, sujuvad üleminekud ja dünaamiline heliriba, mis reageerib ohutasemele.Modulaarne ülesehitus: Mäng on jaotatud loogilisteks mooduliteks (vaenlased, mängija, kokkupõrked ja põhiloogika).🕹️ JuhtimineTegevusKlahvLiikumine ülesWLiikumine allaSLiikumine vasakuleALiikumine paremaleDValiku kinnitamineHiireklõpsMängust väljumineESC🛠️ Tehniline ülesehitusProjekt koosneb neljast peamisest Pythoni skriptist:maincore.py: Mängu süda. Tegeleb mängutsükli, olekute vahetamise (menüü, valik, mäng), heli ja kasutajaliidesega.player.py: Haldab mängija füüsikat, liikumist ja seisundeid.enemy.py: Sisaldab kõigi 10+ vaenlasetüübi keerukat tehisintellekti ja renderdamisloogikat.damage.py: Spetsialiseeritud moodul kokkupõrgete tuvastamiseks ja mängija elude haldamiseks.🚀 AlustamineEeldusedPython 3.xPygame teekPaigaldamineKlooni repositoorium:Bashgit clone https://github.com/sinukasutaja/null-game.git
-cd null-game
-Paigalda vajalikud teegid:Bashpip install pygame
-Käivita mäng:Bashpython maincore.py
-👥 Autorid, kes tegid projekti koostöös:Renald Mattias Kronbergs, Oskari Klaas, Reivo Meedla – Mänguloogika ja vaenlaste tehisintellekt. Renald Mattias Kronbergs, Oskari Klaas, Reivo Meedla – Süsteemi arhitektuur ja füüsika Renald Mattias Kronbergs – Helikujundus ja visuaalsed efektid
+# 🎮 Null
+
+**Null** on tempokas ja minimalistlik ellujäämismäng, mis on loodud Pythoni ja Pygame'i raamistikuga. See on mäng, kus iga sinu otsus muudab areeni ohtlikumaks.
+
+## 📝 Ülevaade
+Mängus Null juhid sa väikest ruutu pimedas ja reaktiivses keskkonnas. Sinu eesmärk on lihtne: jää ellu kuni taimeri lõpuni.
+
+## ✨ Põhiomadused
+* **Dünaamiline valikusüsteem:** Iga vooru lõpus valid sa ise järgmise ohu.
+* **Erinevad vaenlased:** Jälitajad (Stalker), ridade tõmbajad (Drifter) ja palju muud.
+* **Modulaarne ülesehitus:** Mäng on jaotatud loogilisteks mooduliteks.
+
+## 🕹️ Juhtimine
+| Tegevus | Klahv |
+| :--- | :--- |
+| Liikumine | W, A, S, D |
+| Valiku kinnitamine | Hiireklõps |
+| Väljumine | ESC |
+
+## 🚀 Alustamine
+1.  **Klooni repositoorium:**
+    ```bash
+    git clone [https://github.com/Oskari-Klaas/null.git](https://github.com/Oskari-Klaas/null.git)
+    ```
+2.  **Paigalda vajalikud teegid:**
+    ```bash
+    pip install pygame
+    ```
+3.  **Käivita mäng:**
+    ```bash
+    python maincore.py
+    ```
+
+## 👥 Autorid
+Projekt valmis koostöös:
+* **Renald Mattias Kronbergs** – Mänguloogika
+* **Oskari Klaas** – Süsteemi arhitektuur
+* **Reivo Meedla** – Helikujundus
