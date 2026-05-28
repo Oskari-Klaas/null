@@ -2,4 +2,4 @@
 cd null-game
 Paigalda vajalikud teegid:Bashpip install pygame
 Käivita mäng:Bashpython maincore.py
-👥 AutoridSee projekt valmis koostöös:[Sinu Nimi] – Mänguloogika ja vaenlaste tehisintellekt[Sõbra Nimi] – Süsteemi arhitektuur ja füüsika[Sõbra Nimi] – Helikujundus ja visuaalsed efektid
+👥 Autorid, kes tegid projekti koostöös:Renald Mattias Kronbergs, Oskari Klaas, Reivo Meedla – Mänguloogika ja vaenlaste tehisintellekt. Renald Mattias Kronbergs, Oskari Klaas, Reivo Meedla – Süsteemi arhitektuur ja füüsika Renald Mattias Kronbergs – Helikujundus ja visuaalsed efektid
